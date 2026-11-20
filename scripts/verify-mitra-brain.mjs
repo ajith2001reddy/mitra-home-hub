@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 const root = resolve(import.meta.dirname, '..')
 const read = (path) => readFile(resolve(root, path), 'utf8')
 
-const [brain, homeAssistant, activity, dashboard, frontend, voiceBridge, manifest] = await Promise.all([
+const [brain, homeAssistant, activity, dashboard, frontend, voiceBridge, manifest, photoBridge] = await Promise.all([
   read('native-android/src/com/mitrahome/hub/MitraBrainBridge.java'),
   read('native-android/src/com/mitrahome/hub/HomeAssistantBridge.java'),
   read('native-android/src/com/mitrahome/hub/MainActivity.java'),
@@ -13,6 +13,7 @@ const [brain, homeAssistant, activity, dashboard, frontend, voiceBridge, manifes
   read('src/lib/mitraBrain.ts'),
   read('native-android/src/com/mitrahome/hub/VoiceBridge.java'),
   read('native-android/AndroidManifest.xml'),
+  read('native-android/src/com/mitrahome/hub/PhotoLibraryBridge.java'),
 ])
 
 for (const name of ['get_devices', 'get_device_state', 'turn_on_device', 'turn_off_device', 'control_room']) {
@@ -42,6 +43,11 @@ assert.match(voiceBridge, /SpeechRecognizer\.createSpeechRecognizer/, 'voice inp
 assert.match(voiceBridge, /TextToSpeech/, 'voice replies must use Android text-to-speech')
 assert.match(voiceBridge, /startListening/, 'voice bridge must start push-to-talk listening')
 assert.doesNotMatch(voiceBridge, /WakeWord|MitraWakeService/, 'voice bridge must not retain wake-word behavior')
+assert.match(photoBridge, /Intent\.ACTION_OPEN_DOCUMENT_TREE/, 'Drive photos must use Android’s folder picker')
+assert.match(photoBridge, /takePersistableUriPermission/, 'Drive folder permission must persist across restarts')
+assert.match(photoBridge, /buildChildDocumentsUriUsingTree/, 'Drive sync must enumerate only the selected folder tree')
+assert.doesNotMatch(photoBridge, /drive\.readonly|drive\.file|www\.googleapis\.com\/auth\/drive/, 'Drive photos must not request broad Google Drive OAuth scopes')
+assert.match(photoBridge, /copyToPrivateLibrary\(file, sourceKey\)/, 'Drive files must be copied into MITRA private storage before display')
 assert.doesNotMatch(activity, /DisplayBridge|setStandby\(isStandby\)/, 'MITRA must not use the unstable app-window brightness override')
 assert.match(dashboard, /<AssistantPanel brain=\{brain\} voice=\{voice\} \/>/, 'dashboard must use the real MITRA Brain voice panel')
 assert.match(dashboard, /setInterval\(\(\) => setNow\(new Date\(\)\), 60_000\)/, 'Duet dashboard clock must avoid expensive per-second full-screen repaints')

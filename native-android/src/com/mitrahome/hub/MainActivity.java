@@ -187,6 +187,7 @@ public final class MainActivity extends Activity {
     if (gmailBridge != null) gmailBridge.shutdown();
     if (mitraBrainBridge != null) mitraBrainBridge.shutdown();
     if (voiceBridge != null) voiceBridge.shutdown();
+    if (photoLibraryBridge != null) photoLibraryBridge.shutdown();
     homeAssistantBridge = null;
     gmailBridge = null;
     mitraBrainBridge = null;

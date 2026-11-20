@@ -1,7 +1,8 @@
-import { BellRing, Brain, CalendarDays, Camera, Check, ChevronRight, CircleUserRound, CloudSun, Cog, House, KeyRound, Link2, LockKeyhole, Mail, Mic2, Palette, ShieldCheck, SlidersHorizontal, Sparkles, Volume2 } from 'lucide-react'
+import { BellRing, Brain, CalendarDays, Camera, Check, ChevronRight, CircleUserRound, CloudSun, Cog, FolderOpen, House, KeyRound, Link2, LockKeyhole, Mail, Mic2, Palette, ShieldCheck, SlidersHorizontal, Sparkles, Volume2 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import type { ConnectionState } from '../../lib/homeAssistant'
 import type { GoogleMailBrief, GoogleMailState } from '../../lib/googleMail'
+import type { DrivePhotoFolderStatus } from '../../lib/photoLibrary'
 import type { MitraBrain } from '../assistant/useMitraBrain'
 import type { MitraVoice } from '../assistant/useMitraVoice'
 import './MitraSettings.css'
@@ -61,7 +62,15 @@ type Props = {
   sceneCount: number
   integrations: IntegrationStatus
   googleMail: { state: GoogleMailState; message: string; email: string; messages: GoogleMailBrief[]; connect: () => void; refresh: () => void; disconnect: () => void }
-  photoLibrary: { available: boolean; count: number; choose: () => void }
+  photoLibrary: {
+    available: boolean
+    count: number
+    choose: () => void
+    drive: DrivePhotoFolderStatus
+    chooseDriveFolder: () => void
+    refreshDriveFolder: () => void
+    disconnectDriveFolder: () => void
+  }
   brain: MitraBrain
   voice: MitraVoice
   onOpenHomeAssistant: () => void
@@ -183,6 +192,9 @@ function Voice({ voice }: { voice: MitraVoice }) {
 function Integrations({ data, googleMail, photoLibrary }: { data: IntegrationStatus; googleMail: Props['googleMail']; photoLibrary: Props['photoLibrary'] }) {
   const gmailConnected = googleMail.state === 'connected'
   const gmailConnecting = googleMail.state === 'authorizing'
+  const driveConnected = photoLibrary.drive.state === 'connected'
+  const driveBusy = photoLibrary.drive.state === 'selecting' || photoLibrary.drive.state === 'syncing'
+  const drivePhotoLabel = `${photoLibrary.drive.count} Drive photo${photoLibrary.drive.count === 1 ? '' : 's'}`
   return <SettingsPage eyebrow="CONNECTED SERVICES" title="Integrations" description="Only services with a real account or Home Assistant connection are marked as live.">
     <SettingsGroup title="Account & productivity">
       <IntegrationRow icon={<Mail />} title="Gmail" detail={gmailConnected ? `${googleMail.email || 'Google account'} is connected directly to MITRA. ${googleMail.message}` : 'Google mail connects directly to MITRA and is never shared with Home Assistant.'} status={gmailConnected ? 'Connected' : gmailConnecting ? 'Waiting for Google' : 'Not connected'} good={gmailConnected} action={gmailConnected ? <><button className="settings-action" onClick={googleMail.refresh}>Refresh</button><button className="settings-action" onClick={googleMail.disconnect}>Disconnect</button></> : <button className="settings-action" disabled={gmailConnecting} onClick={googleMail.connect}>{gmailConnecting ? 'Opening Google…' : 'Connect Google'}</button>} />
@@ -192,6 +204,7 @@ function Integrations({ data, googleMail, photoLibrary }: { data: IntegrationSta
     <SettingsGroup title="Home & media">
       <IntegrationRow icon={<CloudSun />} title="Weather" detail={data.weather ? 'Live weather is coming from Home Assistant.' : 'Add a weather integration in Home Assistant to show live conditions.'} status={data.weather ? 'Connected' : 'Not connected'} good={data.weather} />
       <IntegrationRow icon={<Camera />} title="Camera feeds" detail={data.cameras ? `${data.cameras} Home Assistant camera${data.cameras === 1 ? '' : 's'} detected. Feed controls are the next safe step.` : 'No Home Assistant camera entities are detected.'} status={data.cameras ? 'Ready to add' : 'Not connected'} good={Boolean(data.cameras)} />
+      <IntegrationRow icon={<FolderOpen />} title="Google Drive photo folder" detail={driveConnected ? `${drivePhotoLabel} copied privately from ${photoLibrary.drive.folderName || 'your selected folder'}. MITRA can read only this chosen folder, not the rest of your Drive.` : photoLibrary.drive.state === 'error' ? photoLibrary.drive.message : 'Choose one Google Drive folder in Android’s folder picker. MITRA receives read access only to that folder, copies image files into private app storage, and never shares them with Home Assistant.'} status={driveConnected ? 'Connected' : driveBusy ? 'Syncing' : photoLibrary.available ? 'Not connected' : 'Lenovo only'} good={driveConnected} action={photoLibrary.available ? (driveConnected ? <><button className="settings-action" onClick={photoLibrary.refreshDriveFolder}>Sync now</button><button className="settings-action" onClick={photoLibrary.disconnectDriveFolder}>Disconnect</button></> : <button className="settings-action" disabled={driveBusy} onClick={photoLibrary.chooseDriveFolder}>{driveBusy ? 'Opening folder…' : 'Choose folder'}</button>) : undefined} />
       <IntegrationRow icon={<CircleUserRound />} title="Personal photos" detail={photoLibrary.available ? (photoLibrary.count ? `${photoLibrary.count} private photo${photoLibrary.count === 1 ? '' : 's'} saved on this Lenovo. Home Assistant cannot access them.` : 'Add pictures from the Lenovo photo picker. To use iPhone photos, first send or download them to this Lenovo.') : 'Personal photos are available only in the native MITRA app on the Lenovo.'} status={photoLibrary.count ? `${photoLibrary.count} saved` : photoLibrary.available ? 'Ready to add' : 'Lenovo only'} good={photoLibrary.count > 0} action={photoLibrary.available ? <button className="settings-action" onClick={photoLibrary.choose}>Add photos</button> : undefined} />
     </SettingsGroup>
   </SettingsPage>

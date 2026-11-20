@@ -2,21 +2,41 @@ plugins {
   id 'com.android.application'
 }
 
+def mitraApplicationId = providers.gradleProperty('mitraApplicationId').orElse('com.mitrahome.hub').get()
+def mitraKeystorePath = providers.gradleProperty('mitraKeystorePath').orNull
+def mitraKeyAlias = providers.environmentVariable('MITRA_KEY_ALIAS').orNull
+def mitraKeystorePassword = providers.environmentVariable('MITRA_KEYSTORE_PASSWORD').orNull
+def useLocalSigning = mitraKeystorePath != null && mitraKeyAlias != null && mitraKeystorePassword != null
+
 android {
   namespace 'com.mitrahome.hub'
   compileSdk 35
 
   defaultConfig {
-    applicationId 'com.mitrahome.hub'
+    applicationId mitraApplicationId
     minSdk 26
     targetSdk 35
-    versionCode 24
-    versionName '3.3'
+    versionCode 25
+    versionName '3.4'
+  }
+
+  if (useLocalSigning) {
+    signingConfigs {
+      localUpdate {
+        storeFile file(mitraKeystorePath)
+        storePassword mitraKeystorePassword
+        keyAlias mitraKeyAlias
+        keyPassword mitraKeystorePassword
+      }
+    }
   }
 
   buildTypes {
+    debug {
+      if (useLocalSigning) signingConfig signingConfigs.localUpdate
+    }
     release {
-      signingConfig signingConfigs.debug
+      signingConfig useLocalSigning ? signingConfigs.localUpdate : signingConfigs.debug
       minifyEnabled false
     }
   }

@@ -13,6 +13,7 @@ The project is designed for a dedicated landscape display such as a Lenovo Duet.
 - Supports lights, switches, fans, covers, locks, media players, scenes, and other Home Assistant entities exposed by the dashboard.
 - Verifies smart-home state after an AI-initiated action before reporting success.
 - Displays a local private photo library selected from the device. Chosen photos are copied into MITRA's app-private storage.
+- Lets you choose one Google Drive folder through Android's folder picker; only image files from that selected folder are copied into MITRA's private photo library.
 - Uses Google Identity to request Gmail read-only access from the signed-in user, then shows summaries in MITRA. Gmail data is not sent to Home Assistant.
 - Provides push-to-talk speech recognition and spoken replies through Android. An always-listening wake word is deliberately **not** included.
 - Provides optional MITRA Brain chat using the OpenAI Responses API, with web search and controlled smart-home functions.
@@ -139,6 +140,8 @@ The repository never includes a signing key. Create and keep your own release ke
 
 The public package ID is `com.mitrahome.hub`. It differs from any locally installed development package with another ID, so a build from this repository installs as a separate app unless you migrate it deliberately.
 
+For a private upgrade of an existing installation that uses a different Android package ID, pass `-PmitraApplicationId=<existing-package-id>` and provide the matching signing material through local-only build inputs: `-PmitraKeystorePath=<path>` plus `MITRA_KEY_ALIAS` and `MITRA_KEYSTORE_PASSWORD` environment variables. Do not put the existing package ID, keystore path, alias, or password in this repository.
+
 ## Initial MITRA setup
 
 Open the Android app and use the MITRA Settings navigation. Settings are organized as:
@@ -173,6 +176,12 @@ Google OAuth is not a Home Assistant integration: MITRA does not send mail conte
 ### Personal photos
 
 Open the photo section and choose photos from the system picker. On iPhone, transfer selected photos to the tablet first (for example with a permitted local transfer or cloud photo provider), then import them through the Android picker. MITRA copies imported images into its own app-private storage, uses them in the carousel/background, and never uploads them by itself.
+
+### Google Drive photo folder
+
+In **MITRA Settings → Integrations → Google Drive photo folder**, select **Choose folder**. Android opens its folder picker; choose the Google Drive account and the one folder that contains the photos you want MITRA to display. MITRA receives persistent read access only to the folder you select, not to the rest of your Google Drive. It imports direct image files from that folder into app-private storage, where they can be used by the carousel, blurred dashboard background, and standby display.
+
+Use **Sync now** after adding new photos to that folder. Choosing a different Drive folder replaces the previously imported Drive photos; manually removing a Drive photo in MITRA hides it so it will not return on the next sync. **Disconnect** removes MITRA's permission to the selected folder and deletes its locally imported Drive copies, while preserving photos that you imported directly from the device.
 
 ### Voice
 
