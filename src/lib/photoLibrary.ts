@@ -4,10 +4,12 @@ export type PersonalPhoto = {
   createdAt: number
 }
 
-export type DrivePhotoFolderState = 'setup' | 'selecting' | 'syncing' | 'connected' | 'error' | 'offline'
+export type DrivePhotoFolderState = 'setup' | 'authorizing' | 'selecting' | 'syncing' | 'connected' | 'error' | 'offline'
 
 export type DrivePhotoFolderStatus = {
   state: DrivePhotoFolderState
+  accountEmail: string
+  accountName: string
   folderName: string
   count: number
   message: string
@@ -18,6 +20,8 @@ export type NativePhotoLibraryBridge = {
   choose(): void
   remove(id: string): void
   driveStatus(): string
+  connectDriveAccount(): void
+  disconnectDriveAccount(): void
   chooseDriveFolder(): void
   refreshDriveFolder(): void
   disconnectDriveFolder(): void

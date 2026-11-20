@@ -13,7 +13,7 @@ The project is designed for a dedicated landscape display such as a Lenovo Duet.
 - Supports lights, switches, fans, covers, locks, media players, scenes, and other Home Assistant entities exposed by the dashboard.
 - Verifies smart-home state after an AI-initiated action before reporting success.
 - Displays a local private photo library selected from the device. Chosen photos are copied into MITRA's app-private storage.
-- Lets you choose one Google Drive folder through Android's folder picker; only image files from that selected folder are copied into MITRA's private photo library.
+- Provides a separate Google Drive account sign-in followed by a one-folder picker; only image files from that selected folder are copied into MITRA's private photo library.
 - Uses Google Identity to request Gmail read-only access from the signed-in user, then shows summaries in MITRA. Gmail data is not sent to Home Assistant.
 - Provides push-to-talk speech recognition and spoken replies through Android. An always-listening wake word is deliberately **not** included.
 - Provides optional MITRA Brain chat using the OpenAI Responses API, with web search and controlled smart-home functions.
@@ -84,7 +84,7 @@ The browser UI never receives the Home Assistant access token or OpenAI key. Sen
 
 - A reachable Home Assistant server and a separate long-lived access token
 - An OpenAI API key for MITRA Brain
-- Google Play services and a Google account for Gmail access
+- Google Play services and a Google account for Gmail or Google Drive photo access
 - A Matter-compatible Home Assistant setup for Matter commissioning
 - A secure remote network solution, such as Tailscale, for access outside the home network
 
@@ -179,9 +179,14 @@ Open the photo section and choose photos from the system picker. On iPhone, tran
 
 ### Google Drive photo folder
 
-In **MITRA Settings → Integrations → Google Drive photo folder**, select **Choose folder**. Android opens its folder picker; choose the Google Drive account and the one folder that contains the photos you want MITRA to display. MITRA receives persistent read access only to the folder you select, not to the rest of your Google Drive. It imports direct image files from that folder into app-private storage, where they can be used by the carousel, blurred dashboard background, and standby display.
+This is a two-step, hybrid connection that keeps Google account identity separate from photo-file access:
 
-Use **Sync now** after adding new photos to that folder. Choosing a different Drive folder replaces the previously imported Drive photos; manually removing a Drive photo in MITRA hides it so it will not return on the next sync. **Disconnect** removes MITRA's permission to the selected folder and deletes its locally imported Drive copies, while preserving photos that you imported directly from the device.
+1. In **MITRA Settings → Integrations → Google Drive account**, choose **Sign in with Google** and deliberately choose the Google account that contains your photos. MITRA receives profile identity only at this step—no broad Google Drive API scope or Drive access token is requested.
+2. In **Google Drive photo folder**, choose **Choose folder**. Android opens its folder picker. Select **Google Drive**, open the folder you chose to share with MITRA, then confirm **Use this folder**. Android grants MITRA persistent read access only to that selected folder and its direct image files, not the rest of the account's Drive.
+
+MITRA imports the images into app-private storage, where they can be used by the carousel, blurred dashboard background, and standby display. The Google account identity and photo-folder permission stay on the Lenovo and are never shared with Home Assistant.
+
+Use **Sync now** after adding new photos to that folder. Choosing a different Drive folder replaces the previously imported Drive photos; manually removing a Drive photo in MITRA hides it so it will not return on the next sync. **Remove folder** removes MITRA's folder permission and its locally imported Drive copies while preserving photos you imported directly from the device. Disconnecting the **Google Drive account** removes both the selected-folder permission and its imported Drive copies.
 
 ### Voice
 
@@ -207,6 +212,8 @@ For smart-home requests, MITRA Brain exposes only controlled functions: `get_dev
 | Home Assistant URL/token | Android native bridge; token encrypted using Android Keystore | Never commit it |
 | OpenAI API key | Android native MITRA Brain bridge; encrypted using Android Keystore | Never commit it |
 | Gmail access token | Google Play services/native process memory | Never commit it |
+| Google Drive identity | App-private preferences; no Drive API token | Never commit it |
+| Google Drive photo folder | Android persistent folder grant plus app-private imported copies | Never commit it |
 | Personal photos | App-private storage on the device | Never commit them |
 | Conversation/history/memory | Local app preferences | Never commit exports |
 | APKs and signing keys | Local build output / private signing storage | Ignored by `.gitignore` |
@@ -242,10 +249,11 @@ Recommended manual checks on a non-critical device:
 4. Test a failed connection and confirm MITRA reports an error rather than a successful action.
 5. Test a scene and an area/room command after assigning Home Assistant Areas.
 6. Connect/disconnect Gmail and verify permissions are shown by Google.
-7. Import and remove a non-sensitive test photo.
-8. Use push-to-talk, confirm transcription and spoken response, then restart the app.
-9. Let the screen idle into standby and tap to wake it.
-10. Restart the Android app and verify that authorized local configuration restores without revealing credentials.
+7. Sign in to a non-sensitive Google Drive account, choose one test folder, verify only its direct images import, then disconnect and verify the copies are removed.
+8. Import and remove a non-sensitive local test photo.
+9. Use push-to-talk, confirm transcription and spoken response, then restart the app.
+10. Let the screen idle into standby and tap to wake it.
+11. Restart the Android app and verify that authorized local configuration restores without revealing credentials.
 
 ## Git and GitHub publishing checklist
 
@@ -270,6 +278,7 @@ Keep the GitHub repository **private** until you have independently reviewed eve
 | Entities are missing | Verify they are exposed in Home Assistant, supported by MITRA, and assigned to an Area if you expect them under a room. |
 | AI device command fails | Check MITRA Brain smart-home permission, Home Assistant connection, exact device name, and the activity/error log. |
 | Gmail sign-in does not complete | Check Google Play services, device account, network access, and OAuth/consent-screen requirements. |
+| Google Drive account sign-in or folder selection does not complete | Update Google Play services and the Google Drive app, confirm the selected account is available on the tablet, then sign in to Drive again before choosing a folder. |
 | Voice does not work | Grant microphone permission and verify Android speech recognition and text-to-speech services are available. |
 | Android build fails | Confirm JDK, Android SDK Platform 35, Gradle, and `npm run build` completed before the Android build. |
 | Tablet becomes slow | Reduce photo count, disable unneeded integrations, close memory-heavy Android apps, and use the app's low-cost standby mode. |

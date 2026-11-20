@@ -13,6 +13,11 @@ import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
+import com.google.android.gms.auth.api.signin.GoogleSignIn;
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
+import com.google.android.gms.auth.api.signin.GoogleSignInClient;
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
+import com.google.android.gms.common.api.ApiException;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -36,13 +41,19 @@ import org.json.JSONObject;
  * Assistant, the photo source, or an external server.
  */
 final class PhotoLibraryBridge {
-  static final int PICK_PHOTOS_REQUEST = 73;
+  // Keep these distinct from GmailBridge.AUTHORIZATION_REQUEST_CODE (73).
+  // A duplicate request code would allow a Google result to be consumed as a
+  // photo-picker result before the intended bridge receives it.
+  static final int PICK_PHOTOS_REQUEST = 75;
   static final int PICK_DRIVE_FOLDER_REQUEST = 74;
+  static final int DRIVE_ACCOUNT_SIGN_IN_REQUEST = 76;
   private static final String TAG = "MitraPhotos";
   private static final String PREFS = "mitra_photos";
   private static final String KEY_LIBRARY = "library";
   private static final String KEY_DRIVE_FOLDER_URI = "drive_folder_uri";
   private static final String KEY_DRIVE_FOLDER_NAME = "drive_folder_name";
+  private static final String KEY_DRIVE_ACCOUNT_EMAIL = "drive_account_email";
+  private static final String KEY_DRIVE_ACCOUNT_NAME = "drive_account_name";
   private static final String KEY_IGNORED_DRIVE_SOURCES = "ignored_drive_sources";
   private static final String DIRECTORY = "mitra-photos";
   private static final String PHOTO_PATH = "/personal-photos/";
@@ -54,11 +65,19 @@ final class PhotoLibraryBridge {
   private final WebView webView;
   private final SharedPreferences preferences;
   private final ExecutorService executor = Executors.newSingleThreadExecutor();
+  private final GoogleSignInClient driveSignInClient;
 
   PhotoLibraryBridge(Activity activity, WebView webView) {
     this.activity = activity;
     this.webView = webView;
     this.preferences = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    // This sign-in is identity-only. Folder access is still granted separately
+    // by Android's document picker, so MITRA never requests a broad Drive scope.
+    GoogleSignInOptions signInOptions = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+      .requestEmail()
+      .requestProfile()
+      .build();
+    this.driveSignInClient = GoogleSignIn.getClient(activity, signInOptions);
   }
 
   @JavascriptInterface
@@ -73,12 +92,47 @@ final class PhotoLibraryBridge {
    */
   @JavascriptInterface
   public String driveStatus() {
-    return driveStatusPayload(hasDriveFolder() ? "connected" : "setup", hasDriveFolder() ? "Selected folder is ready to sync." : "Choose one Google Drive folder that contains your photos.").toString();
+    if (!hasDriveAccount()) return driveStatusPayload("setup", "Sign in to your Google account, then choose the Drive folder containing your photos.").toString();
+    return driveStatusPayload(hasDriveFolder() ? "connected" : "setup", hasDriveFolder() ? "Selected folder is ready to sync." : "Signed in to Google. Choose the one Drive folder containing your MITRA photos.").toString();
+  }
+
+  /** Opens a separate Google account chooser. No Drive API permission is requested here. */
+  @JavascriptInterface
+  public void connectDriveAccount() {
+    activity.runOnUiThread(() -> {
+      sendDriveStatus("authorizing", "Opening Google sign-in. Choose the account for your Drive photos.");
+      // Clear only MITRA's prior identity selection, so the account chooser is
+      // shown and the user can deliberately change accounts.
+      driveSignInClient.signOut().addOnCompleteListener(ignored -> {
+        try {
+          activity.startActivityForResult(driveSignInClient.getSignInIntent(), DRIVE_ACCOUNT_SIGN_IN_REQUEST);
+        } catch (Exception error) {
+          Log.e(TAG, "Could not open Google account sign-in", error);
+          sendDriveStatus("error", "MITRA could not open Google sign-in. Check Google Play services and try again.");
+        }
+      });
+    });
+  }
+
+  /** Removing the Google identity also removes the selected folder grant and its imported copies. */
+  @JavascriptInterface
+  public void disconnectDriveAccount() {
+    executor.execute(() -> {
+      sendDriveStatus("syncing", "Removing the Google account and selected Drive folder from MITRA.");
+      removeDriveFolderAccess();
+      preferences.edit().remove(KEY_DRIVE_ACCOUNT_EMAIL).remove(KEY_DRIVE_ACCOUNT_NAME).apply();
+      activity.runOnUiThread(() -> driveSignInClient.signOut());
+      sendDriveStatus("setup", "Google Drive was disconnected. Local photos that were not imported from Drive remain on this Lenovo.");
+    });
   }
 
   @JavascriptInterface
   public void chooseDriveFolder() {
     activity.runOnUiThread(() -> {
+      if (!hasDriveAccount()) {
+        sendDriveStatus("setup", "Sign in to Google before selecting a Drive photo folder.");
+        return;
+      }
       Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
       intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
       try {
@@ -100,13 +154,8 @@ final class PhotoLibraryBridge {
   public void disconnectDriveFolder() {
     executor.execute(() -> {
       sendDriveStatus("syncing", "Removing the selected Drive folder from MITRA.");
-      String stored = preferences.getString(KEY_DRIVE_FOLDER_URI, "");
-      if (!stored.isEmpty()) {
-        try { activity.getContentResolver().releasePersistableUriPermission(Uri.parse(stored), Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
-      }
-      preferences.edit().remove(KEY_DRIVE_FOLDER_URI).remove(KEY_DRIVE_FOLDER_NAME).remove(KEY_IGNORED_DRIVE_SOURCES).apply();
-      clearDrivePhotos();
-      sendDriveStatus("setup", "Drive folder access was removed. Local photos remain on this Lenovo.");
+      removeDriveFolderAccess();
+      sendDriveStatus("setup", hasDriveAccount() ? "Drive folder access was removed. Select another folder whenever you are ready." : "Drive folder access was removed. Local photos remain on this Lenovo.");
     });
   }
 
@@ -128,6 +177,28 @@ final class PhotoLibraryBridge {
   }
 
   boolean handleActivityResult(int requestCode, int resultCode, Intent data) {
+    if (requestCode == DRIVE_ACCOUNT_SIGN_IN_REQUEST) {
+      if (resultCode != Activity.RESULT_OK || data == null) {
+        sendDriveStatus("setup", "Google sign-in was cancelled.");
+        return true;
+      }
+      try {
+        GoogleSignInAccount account = GoogleSignIn.getSignedInAccountFromIntent(data).getResult(ApiException.class);
+        String email = account == null || account.getEmail() == null ? "" : account.getEmail().trim();
+        if (email.isEmpty()) throw new ApiException(com.google.android.gms.common.api.Status.RESULT_INTERNAL_ERROR);
+        String name = account.getDisplayName() == null ? "" : account.getDisplayName().trim();
+        // A legacy folder grant (from before separate account sign-in existed)
+        // cannot be proven to belong to the newly selected account. Remove it
+        // and require an explicit folder choice after every fresh account sign-in.
+        if (hasDriveFolder()) removeDriveFolderAccess();
+        preferences.edit().putString(KEY_DRIVE_ACCOUNT_EMAIL, email).putString(KEY_DRIVE_ACCOUNT_NAME, name).apply();
+        sendDriveStatus("setup", "Signed in as " + email + ". Now choose the one Google Drive folder with your photos.");
+      } catch (ApiException error) {
+        Log.w(TAG, "Google account sign-in was not completed", error);
+        sendDriveStatus("error", "Google sign-in was not completed. Try again and choose an account.");
+      }
+      return true;
+    }
     if (requestCode == PICK_DRIVE_FOLDER_REQUEST) {
       if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null) {
         sendDriveStatus(hasDriveFolder() ? "connected" : "setup", "Folder selection was cancelled.");
@@ -307,6 +378,18 @@ final class PhotoLibraryBridge {
     return !preferences.getString(KEY_DRIVE_FOLDER_URI, "").isEmpty();
   }
 
+  private boolean hasDriveAccount() {
+    return !driveAccountEmail().isEmpty();
+  }
+
+  private String driveAccountEmail() {
+    return preferences.getString(KEY_DRIVE_ACCOUNT_EMAIL, "").trim();
+  }
+
+  private String driveAccountName() {
+    return preferences.getString(KEY_DRIVE_ACCOUNT_NAME, "").trim();
+  }
+
   private String driveFolderName() {
     String name = preferences.getString(KEY_DRIVE_FOLDER_NAME, "").trim();
     return name.isEmpty() ? "your selected Drive folder" : name;
@@ -316,6 +399,8 @@ final class PhotoLibraryBridge {
     try {
       JSONObject payload = new JSONObject();
       payload.put("state", state);
+      payload.put("accountEmail", driveAccountEmail());
+      payload.put("accountName", driveAccountName());
       payload.put("folderName", driveFolderName());
       payload.put("count", drivePhotoCount(library()));
       payload.put("message", message);
@@ -388,6 +473,15 @@ final class PhotoLibraryBridge {
     }
     save(next);
     sendLibrary(next);
+  }
+
+  private void removeDriveFolderAccess() {
+    String stored = preferences.getString(KEY_DRIVE_FOLDER_URI, "");
+    if (!stored.isEmpty()) {
+      try { activity.getContentResolver().releasePersistableUriPermission(Uri.parse(stored), Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
+    }
+    preferences.edit().remove(KEY_DRIVE_FOLDER_URI).remove(KEY_DRIVE_FOLDER_NAME).remove(KEY_IGNORED_DRIVE_SOURCES).apply();
+    clearDrivePhotos();
   }
 
   private boolean isImage(String mimeType, String name) {
