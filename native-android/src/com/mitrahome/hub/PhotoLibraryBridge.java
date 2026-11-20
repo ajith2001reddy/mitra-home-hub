@@ -5,9 +5,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
+import android.provider.DocumentsContract.Root;
 import android.provider.OpenableColumns;
 import android.util.Log;
 import android.webkit.JavascriptInterface;
@@ -58,8 +61,13 @@ final class PhotoLibraryBridge {
   private static final String DIRECTORY = "mitra-photos";
   private static final String PHOTO_PATH = "/personal-photos/";
   private static final String PHOTO_HOST = "https://appassets.androidplatform.net";
+  private static final String GOOGLE_DRIVE_DOCUMENTS_AUTHORITY = "com.google.android.apps.docs.storage";
   private static final int MAX_DRIVE_PHOTOS_PER_SYNC = 100;
   private static final long MAX_DRIVE_PHOTO_BYTES = 30L * 1024L * 1024L;
+  // A Duet's display does not need original iPhone-sized images. Keeping an
+  // optimized copy prevents WebView from decoding 20–50 MP photos repeatedly.
+  private static final int MAX_PHOTO_WIDTH = 1920;
+  private static final int MAX_PHOTO_HEIGHT = 1200;
 
   private final Activity activity;
   private final WebView webView;
@@ -92,6 +100,7 @@ final class PhotoLibraryBridge {
    */
   @JavascriptInterface
   public String driveStatus() {
+    if (!hasGoogleDriveProvider()) return driveStatusPayload("setup", "Install the Google Drive app on this Lenovo, then sign in and choose your photo folder.").toString();
     if (!hasDriveAccount()) return driveStatusPayload("setup", "Sign in to your Google account, then choose the Drive folder containing your photos.").toString();
     return driveStatusPayload(hasDriveFolder() ? "connected" : "setup", hasDriveFolder() ? "Selected folder is ready to sync." : "Signed in to Google. Choose the one Drive folder containing your MITRA photos.").toString();
   }
@@ -100,6 +109,10 @@ final class PhotoLibraryBridge {
   @JavascriptInterface
   public void connectDriveAccount() {
     activity.runOnUiThread(() -> {
+      if (!hasGoogleDriveProvider()) {
+        sendDriveStatus("setup", "Install the Google Drive app first so MITRA can open a Drive-only folder selector.");
+        return;
+      }
       sendDriveStatus("authorizing", "Opening Google sign-in. Choose the account for your Drive photos.");
       // Clear only MITRA's prior identity selection, so the account chooser is
       // shown and the user can deliberately change accounts.
@@ -126,6 +139,24 @@ final class PhotoLibraryBridge {
     });
   }
 
+  /** Opens Google Play so the user can install the Drive document provider if needed. */
+  @JavascriptInterface
+  public void installGoogleDrive() {
+    activity.runOnUiThread(() -> {
+      Intent playStore = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.apps.docs"));
+      try {
+        activity.startActivity(playStore);
+      } catch (Exception noPlayStore) {
+        try {
+          activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.apps.docs")));
+        } catch (Exception error) {
+          Log.w(TAG, "Could not open the Google Drive install page", error);
+          sendDriveStatus("error", "MITRA could not open the Google Drive install page.");
+        }
+      }
+    });
+  }
+
   @JavascriptInterface
   public void chooseDriveFolder() {
     activity.runOnUiThread(() -> {
@@ -133,15 +164,7 @@ final class PhotoLibraryBridge {
         sendDriveStatus("setup", "Sign in to Google before selecting a Drive photo folder.");
         return;
       }
-      Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
-      try {
-        sendDriveStatus("selecting", "Choose the Google Drive folder containing your MITRA photos.");
-        activity.startActivityForResult(intent, PICK_DRIVE_FOLDER_REQUEST);
-      } catch (Exception error) {
-        Log.e(TAG, "Could not open the Drive folder picker", error);
-        sendDriveStatus("error", "MITRA could not open the folder picker.");
-      }
+      openGoogleDriveFolderPicker();
     });
   }
 
@@ -192,7 +215,8 @@ final class PhotoLibraryBridge {
         // and require an explicit folder choice after every fresh account sign-in.
         if (hasDriveFolder()) removeDriveFolderAccess();
         preferences.edit().putString(KEY_DRIVE_ACCOUNT_EMAIL, email).putString(KEY_DRIVE_ACCOUNT_NAME, name).apply();
-        sendDriveStatus("setup", "Signed in as " + email + ". Now choose the one Google Drive folder with your photos.");
+        sendDriveStatus("setup", "Signed in as " + email + ". Opening Google Drive so you can choose your photo folder.");
+        openGoogleDriveFolderPicker();
       } catch (ApiException error) {
         Log.w(TAG, "Google account sign-in was not completed", error);
         sendDriveStatus("error", "Google sign-in was not completed. Try again and choose an account.");
@@ -205,6 +229,10 @@ final class PhotoLibraryBridge {
         return true;
       }
       Uri folder = data.getData();
+      if (!isGoogleDriveFolder(folder)) {
+        sendDriveStatus("error", "Please select a folder inside Google Drive. Local files are not used for this connection.");
+        return true;
+      }
       int grantedFlags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
       if (grantedFlags == 0) {
         sendDriveStatus("error", "Android did not grant read access to that folder.");
@@ -286,15 +314,15 @@ final class PhotoLibraryBridge {
       Log.w(TAG, "Skipping oversized Drive photo: " + name);
       return null;
     }
-    String extension = extensionFor(mimeType, name);
     String id = UUID.randomUUID().toString().replace("-", "");
-    String fileName = "photo_" + id + extension;
+    String fileName = "photo_" + id + ".jpg";
     File destination = new File(photoDirectory(), fileName);
-    try (InputStream input = activity.getContentResolver().openInputStream(uri); OutputStream output = new FileOutputStream(destination)) {
-      if (input == null) throw new IOException("The selected photo could not be opened.");
-      byte[] buffer = new byte[32 * 1024];
-      int read;
-      while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+    Bitmap bitmap = null;
+    try (OutputStream output = new FileOutputStream(destination)) {
+      bitmap = decodeForDisplay(uri);
+      if (bitmap == null || !bitmap.compress(Bitmap.CompressFormat.JPEG, 86, output)) {
+        throw new IOException("The selected photo could not be optimized for the MITRA display.");
+      }
       JSONObject photo = new JSONObject();
       photo.put("id", id);
       photo.put("file", fileName);
@@ -308,7 +336,78 @@ final class PhotoLibraryBridge {
       destination.delete();
       Log.w(TAG, "Could not copy selected photo", error);
       return null;
+    } finally {
+      if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
     }
+  }
+
+  private void openGoogleDriveFolderPicker() {
+    Uri driveRoot = googleDriveRootUri();
+    if (driveRoot == null) {
+      sendDriveStatus("error", "Google Drive is not ready on this Lenovo. Open the Google Drive app, sign in, then try again.");
+      return;
+    }
+    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+    intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, driveRoot);
+    try {
+      sendDriveStatus("selecting", "Choose the Google Drive folder containing your MITRA photos.");
+      activity.startActivityForResult(intent, PICK_DRIVE_FOLDER_REQUEST);
+    } catch (Exception error) {
+      Log.e(TAG, "Could not open Google Drive folder picker", error);
+      sendDriveStatus("error", "MITRA could not open the Google Drive folder picker.");
+    }
+  }
+
+  private Uri googleDriveRootUri() {
+    if (!hasGoogleDriveProvider()) return null;
+    Uri roots = DocumentsContract.buildRootsUri(GOOGLE_DRIVE_DOCUMENTS_AUTHORITY);
+    String[] projection = new String[] { Root.COLUMN_ROOT_ID };
+    try (Cursor cursor = activity.getContentResolver().query(roots, projection, null, null, null)) {
+      if (cursor == null || !cursor.moveToFirst()) return null;
+      int rootIdColumn = cursor.getColumnIndex(Root.COLUMN_ROOT_ID);
+      if (rootIdColumn < 0) return null;
+      String rootId = cursor.getString(rootIdColumn);
+      return rootId == null || rootId.isEmpty() ? null : DocumentsContract.buildRootUri(GOOGLE_DRIVE_DOCUMENTS_AUTHORITY, rootId);
+    } catch (Exception error) {
+      Log.w(TAG, "Google Drive root is unavailable", error);
+      return null;
+    }
+  }
+
+  private boolean isGoogleDriveFolder(Uri folder) {
+    String authority = folder == null ? null : folder.getAuthority();
+    return authority != null && authority.startsWith(GOOGLE_DRIVE_DOCUMENTS_AUTHORITY);
+  }
+
+  private boolean hasGoogleDriveProvider() {
+    return activity.getPackageManager().resolveContentProvider(GOOGLE_DRIVE_DOCUMENTS_AUTHORITY, 0) != null;
+  }
+
+  private Bitmap decodeForDisplay(Uri uri) throws IOException {
+    BitmapFactory.Options bounds = new BitmapFactory.Options();
+    bounds.inJustDecodeBounds = true;
+    try (InputStream input = activity.getContentResolver().openInputStream(uri)) {
+      if (input == null) throw new IOException("The selected photo could not be opened.");
+      BitmapFactory.decodeStream(input, null, bounds);
+    }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+    int sampleSize = 1;
+    while (bounds.outWidth / sampleSize > MAX_PHOTO_WIDTH * 2 || bounds.outHeight / sampleSize > MAX_PHOTO_HEIGHT * 2) sampleSize *= 2;
+    BitmapFactory.Options options = new BitmapFactory.Options();
+    options.inSampleSize = sampleSize;
+    options.inPreferredConfig = Bitmap.Config.RGB_565;
+    Bitmap decoded;
+    try (InputStream input = activity.getContentResolver().openInputStream(uri)) {
+      if (input == null) throw new IOException("The selected photo could not be opened.");
+      decoded = BitmapFactory.decodeStream(input, null, options);
+    }
+    if (decoded == null) return null;
+    float scale = Math.min(1f, Math.min((float) MAX_PHOTO_WIDTH / decoded.getWidth(), (float) MAX_PHOTO_HEIGHT / decoded.getHeight()));
+    if (scale >= 1f) return decoded;
+    Bitmap scaled = Bitmap.createScaledBitmap(decoded, Math.max(1, Math.round(decoded.getWidth() * scale)), Math.max(1, Math.round(decoded.getHeight() * scale)), true);
+    if (scaled != decoded) decoded.recycle();
+    return scaled;
   }
 
   private void synchronizeDriveFolder() {
@@ -399,6 +498,7 @@ final class PhotoLibraryBridge {
     try {
       JSONObject payload = new JSONObject();
       payload.put("state", state);
+      payload.put("driveAppAvailable", hasGoogleDriveProvider());
       payload.put("accountEmail", driveAccountEmail());
       payload.put("accountName", driveAccountName());
       payload.put("folderName", driveFolderName());

@@ -16,8 +16,8 @@ android {
     applicationId mitraApplicationId
     minSdk 26
     targetSdk 35
-    versionCode 26
-    versionName '3.5'
+    versionCode 28
+    versionName '3.7'
   }
 
   if (useLocalSigning) {

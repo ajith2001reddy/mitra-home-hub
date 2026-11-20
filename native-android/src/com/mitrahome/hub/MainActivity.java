@@ -9,7 +9,11 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
@@ -21,6 +25,9 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -35,6 +42,9 @@ public final class MainActivity extends Activity {
   private PermissionRequest pendingCameraRequest;
   private WebView dashboard;
   private boolean activityDestroyed;
+  private final Handler mainHandler = new Handler(Looper.getMainLooper());
+  private int rendererExitCount;
+  private long lastRendererExitAt;
 
   @SuppressLint("SetJavaScriptEnabled")
   @Override
@@ -70,6 +80,10 @@ public final class MainActivity extends Activity {
     settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
     settings.setOffscreenPreRaster(false);
     dashboard.setBackgroundColor(Color.rgb(5, 11, 20));
+    // The dedicated dashboard is the active tablet task. Keep its renderer at
+    // important priority while visible so ARC memory pressure is less likely
+    // to kill it instead of an unused background process.
+    dashboard.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true);
     homeAssistantBridge = new HomeAssistantBridge(this, dashboard);
     gmailBridge = new GmailBridge(this, dashboard);
     mitraBrainBridge = new MitraBrainBridge(this, dashboard, homeAssistantBridge);
@@ -162,8 +176,8 @@ public final class MainActivity extends Activity {
 
       @Override
       public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
-        Log.w("JarvisWeb", "WebView renderer exited; restoring MITRA dashboard. didCrash=" + detail.didCrash());
-        runOnUiThread(MainActivity.this::recreateDashboard);
+        Log.w("JarvisWeb", "WebView renderer exited. didCrash=" + detail.didCrash());
+        runOnUiThread(MainActivity.this::recoverFromRendererExit);
         return true;
       }
     });
@@ -174,12 +188,73 @@ public final class MainActivity extends Activity {
   private void recreateDashboard() {
     if (activityDestroyed || isFinishing()) return;
     pendingCameraRequest = null;
+    releaseDashboard();
+    createDashboard();
+  }
+
+  private void recoverFromRendererExit() {
+    if (activityDestroyed || isFinishing()) return;
+    long now = SystemClock.elapsedRealtime();
+    if (now - lastRendererExitAt > 60_000L) rendererExitCount = 0;
+    lastRendererExitAt = now;
+    rendererExitCount++;
+    pendingCameraRequest = null;
+    releaseDashboard();
+    // A low-memory kill used to create a rapid WebView recreate loop, making
+    // the Duet look frozen and causing more pressure. Back off, then leave a
+    // light native recovery screen after repeated exits instead.
+    if (rendererExitCount >= 3) {
+      showRecoveryScreen(true);
+      return;
+    }
+    showRecoveryScreen(false);
+    mainHandler.postDelayed(() -> {
+      if (!activityDestroyed && !isFinishing()) createDashboard();
+    }, rendererExitCount == 1 ? 2_000L : 5_000L);
+  }
+
+  private void releaseDashboard() {
     disposeBridges();
     if (dashboard != null) {
       dashboard.destroy();
       dashboard = null;
     }
-    createDashboard();
+  }
+
+  private void showRecoveryScreen(boolean canRetry) {
+    LinearLayout screen = new LinearLayout(this);
+    screen.setOrientation(LinearLayout.VERTICAL);
+    screen.setGravity(Gravity.CENTER);
+    screen.setPadding(56, 56, 56, 56);
+    screen.setBackgroundColor(Color.rgb(5, 11, 20));
+
+    TextView title = new TextView(this);
+    title.setText("MITRA is protecting tablet memory");
+    title.setTextColor(Color.WHITE);
+    title.setTextSize(26);
+    screen.addView(title);
+
+    TextView detail = new TextView(this);
+    detail.setText(canRetry ? "Close unused Chrome or Android apps, then tap Retry MITRA." : "MITRA will recover in a moment.");
+    detail.setTextColor(Color.rgb(202, 215, 235));
+    detail.setTextSize(16);
+    detail.setGravity(Gravity.CENTER);
+    LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+    detailParams.topMargin = 18;
+    screen.addView(detail, detailParams);
+
+    if (canRetry) {
+      Button retry = new Button(this);
+      retry.setText("Retry MITRA");
+      retry.setOnClickListener(view -> {
+        rendererExitCount = 0;
+        createDashboard();
+      });
+      LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+      buttonParams.topMargin = 28;
+      screen.addView(retry, buttonParams);
+    }
+    setContentView(screen);
   }
 
   private void disposeBridges() {
@@ -244,11 +319,8 @@ public final class MainActivity extends Activity {
   protected void onDestroy() {
     activityDestroyed = true;
     pendingCameraRequest = null;
-    disposeBridges();
-    if (dashboard != null) {
-      dashboard.destroy();
-      dashboard = null;
-    }
+    mainHandler.removeCallbacksAndMessages(null);
+    releaseDashboard();
     super.onDestroy();
   }
 

@@ -8,6 +8,7 @@ export type DrivePhotoFolderState = 'setup' | 'authorizing' | 'selecting' | 'syn
 
 export type DrivePhotoFolderStatus = {
   state: DrivePhotoFolderState
+  driveAppAvailable: boolean
   accountEmail: string
   accountName: string
   folderName: string
@@ -20,6 +21,7 @@ export type NativePhotoLibraryBridge = {
   choose(): void
   remove(id: string): void
   driveStatus(): string
+  installGoogleDrive(): void
   connectDriveAccount(): void
   disconnectDriveAccount(): void
   chooseDriveFolder(): void

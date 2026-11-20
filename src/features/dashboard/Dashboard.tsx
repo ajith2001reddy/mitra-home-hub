@@ -85,7 +85,9 @@ export function Dashboard() {
     events.forEach((event) => window.addEventListener(event, registerActivity, { passive: true, capture: true }))
     const timer = window.setInterval(() => {
       if (Date.now() - lastActivity.current >= preferences.standbyMinutes * 60_000) setIsStandby(true)
-    }, 1000)
+    // Idle time is measured in minutes. A 15-second check avoids waking the
+    // full WebView layout every second on the Duet's constrained ARC runtime.
+    }, 15_000)
     return () => {
       events.forEach((event) => window.removeEventListener(event, registerActivity, true))
       window.clearInterval(timer)
@@ -149,7 +151,7 @@ export function Dashboard() {
     else setBrowserPhotos((current) => current.filter((photo) => photo.id !== id))
   }
 
-  return <main className={`mountain-hub ${activeView === 'home' ? 'mountain-hub--reference-home' : ''} ${selectedPhoto ? 'mountain-hub--has-personal-photo' : ''}`} data-theme={preferences.theme} data-density={preferences.density} style={pageStyle}>
+  return <main className={`mountain-hub ${activeView === 'home' ? 'mountain-hub--reference-home' : ''} ${selectedPhoto ? 'mountain-hub--has-personal-photo' : ''} ${photoLibrary.available ? 'mountain-hub--duet-performance' : ''}`} data-theme={preferences.theme} data-density={preferences.density} style={pageStyle}>
     <input ref={photoInput} className="reference-photo-picker" type="file" accept="image/*" multiple onChange={importPhotos} aria-label="Choose photos for the MITRA display" />
     <aside className="hub-sidebar">
       <button className="hub-brand" onClick={() => openView('home')} aria-label={`${preferences.appName} home`}><strong>{preferences.appName}</strong><span>Home Hub</span></button>
@@ -200,7 +202,7 @@ export function Dashboard() {
         {googleMail.state === 'connected' ? <MailBrief email={googleMail.email} messages={googleMail.messages} onRefresh={googleMail.refresh} /> : <div className="hub-empty"><p>Connect Gmail directly to MITRA to see private mail summaries here.</p><button onClick={() => setActiveView('settings')}>Open settings <ChevronRight size={17} /></button></div>}
       </section>}
 
-      {activeView === 'settings' && <section className="hub-section hub-settings-screen"><MitraSettings preferences={preferences} onPreferencesChange={changePreferences} connection={home.connection} message={home.message} deviceCount={devices.length} roomCount={rooms.length} sceneCount={home.scenes.length} integrations={home.integrations} googleMail={googleMail} brain={brain} voice={voice} photoLibrary={{ available: photoLibrary.available, count: photos.length, choose: choosePhotos, drive: photoLibrary.drive, connectDriveAccount: photoLibrary.connectDriveAccount, disconnectDriveAccount: photoLibrary.disconnectDriveAccount, chooseDriveFolder: photoLibrary.chooseDriveFolder, refreshDriveFolder: photoLibrary.refreshDriveFolder, disconnectDriveFolder: photoLibrary.disconnectDriveFolder }} onOpenHomeAssistant={() => setSetupOpen(true)} onNavigate={openView} /></section>}
+      {activeView === 'settings' && <section className="hub-section hub-settings-screen"><MitraSettings preferences={preferences} onPreferencesChange={changePreferences} connection={home.connection} message={home.message} deviceCount={devices.length} roomCount={rooms.length} sceneCount={home.scenes.length} integrations={home.integrations} googleMail={googleMail} brain={brain} voice={voice} photoLibrary={{ available: photoLibrary.available, count: photos.length, choose: choosePhotos, drive: photoLibrary.drive, installGoogleDrive: photoLibrary.installGoogleDrive, connectDriveAccount: photoLibrary.connectDriveAccount, disconnectDriveAccount: photoLibrary.disconnectDriveAccount, chooseDriveFolder: photoLibrary.chooseDriveFolder, refreshDriveFolder: photoLibrary.refreshDriveFolder, disconnectDriveFolder: photoLibrary.disconnectDriveFolder }} onOpenHomeAssistant={() => setSetupOpen(true)} onNavigate={openView} /></section>}
 
     </section>
     <HomeAssistantSetup open={setupOpen} onClose={() => setSetupOpen(false)} initialUrl={home.serverUrl} message={home.message} onConnect={home.connect} />

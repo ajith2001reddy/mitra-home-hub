@@ -181,8 +181,9 @@ Open the photo section and choose photos from the system picker. On iPhone, tran
 
 This is a two-step, hybrid connection that keeps Google account identity separate from photo-file access:
 
-1. In **MITRA Settings → Integrations → Google Drive account**, choose **Sign in with Google** and deliberately choose the Google account that contains your photos. MITRA receives profile identity only at this step—no broad Google Drive API scope or Drive access token is requested.
-2. In **Google Drive photo folder**, choose **Choose folder**. Android opens its folder picker. Select **Google Drive**, open the folder you chose to share with MITRA, then confirm **Use this folder**. Android grants MITRA persistent read access only to that selected folder and its direct image files, not the rest of the account's Drive.
+1. Install the official **Google Drive** Android app on the Lenovo and sign in to it. MITRA requires its Android document provider to grant true folder-only access; it will not fall back to a local-files folder for this connection.
+2. In **MITRA Settings → Integrations → Google Drive account**, choose **Sign in with Google** and deliberately choose the Google account that contains your photos. MITRA receives profile identity only at this step—no broad Google Drive API scope or Drive access token is requested.
+3. MITRA opens the Google Drive folder selector automatically. Open the folder you chose to share with MITRA, then confirm **Use this folder**. Android grants MITRA persistent read access only to that selected folder and its direct image files, not the rest of the account's Drive.
 
 MITRA imports the images into app-private storage, where they can be used by the carousel, blurred dashboard background, and standby display. The Google account identity and photo-folder permission stay on the Lenovo and are never shared with Home Assistant.
 

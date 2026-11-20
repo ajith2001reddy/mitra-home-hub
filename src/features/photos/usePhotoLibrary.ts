@@ -15,6 +15,7 @@ function readPhotos(payload: string | null | undefined): PersonalPhoto[] {
 
 const unavailableDriveStatus: DrivePhotoFolderStatus = {
   state: 'offline',
+  driveAppAvailable: false,
   accountEmail: '',
   accountName: '',
   folderName: '',
@@ -28,6 +29,7 @@ function readDriveStatus(payload: string | null | undefined): DrivePhotoFolderSt
     const validState = ['setup', 'authorizing', 'selecting', 'syncing', 'connected', 'error', 'offline'].includes(parsed.state || '')
     return {
       state: validState ? parsed.state as DrivePhotoFolderStatus['state'] : 'setup',
+      driveAppAvailable: typeof parsed.driveAppAvailable === 'boolean' ? parsed.driveAppAvailable : false,
       accountEmail: typeof parsed.accountEmail === 'string' ? parsed.accountEmail : '',
       accountName: typeof parsed.accountName === 'string' ? parsed.accountName : '',
       folderName: typeof parsed.folderName === 'string' ? parsed.folderName : '',
@@ -59,6 +61,7 @@ export function usePhotoLibrary() {
 
   const choose = useCallback(() => window.MitraPhotos?.choose(), [])
   const remove = useCallback((id: string) => window.MitraPhotos?.remove(id), [])
+  const installGoogleDrive = useCallback(() => window.MitraPhotos?.installGoogleDrive(), [])
   const connectDriveAccount = useCallback(() => {
     if (!window.MitraPhotos) return
     setDrive((current) => ({ ...current, state: 'authorizing', message: 'Opening Google sign-in. Choose the account for your Drive photos.' }))
@@ -85,5 +88,5 @@ export function usePhotoLibrary() {
     window.MitraPhotos.disconnectDriveFolder()
   }, [])
 
-  return { available, photos, choose, remove, refresh, drive, connectDriveAccount, disconnectDriveAccount, chooseDriveFolder, refreshDriveFolder, disconnectDriveFolder }
+  return { available, photos, choose, remove, refresh, drive, installGoogleDrive, connectDriveAccount, disconnectDriveAccount, chooseDriveFolder, refreshDriveFolder, disconnectDriveFolder }
 }

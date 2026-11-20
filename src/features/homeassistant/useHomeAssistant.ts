@@ -81,6 +81,28 @@ function mapStates(raw: HomeAssistantEntity[]): { devices: LiveDevice[]; scenes:
   }
 }
 
+function sameDevices(left: LiveDevice[], right: LiveDevice[]) {
+  return left.length === right.length && left.every((device, index) => {
+    const next = right[index]
+    return next && device.id === next.id && device.name === next.name && device.room === next.room && device.kind === next.kind && device.active === next.active && device.detail === next.detail && device.controllable === next.controllable
+  })
+}
+
+function sameScenes(left: Scene[], right: Scene[]) {
+  return left.length === right.length && left.every((scene, index) => {
+    const next = right[index]
+    return next && scene.id === next.id && scene.title === next.title && scene.caption === next.caption && scene.icon === next.icon
+  })
+}
+
+function sameWeather(left: WeatherSnapshot, right: WeatherSnapshot) {
+  return left?.temperature === right?.temperature && left?.condition === right?.condition
+}
+
+function sameIntegrations(left: HomeAssistantIntegrations, right: HomeAssistantIntegrations) {
+  return left.calendars === right.calendars && left.reminders === right.reminders && left.cameras === right.cameras && left.weather === right.weather
+}
+
 export function useHomeAssistant() {
   const [connection, setConnection] = useState<ConnectionState>(() => (window.JarvisNative ? 'setup' : 'offline'))
   const [serverUrl, setServerUrl] = useState(() => window.JarvisNative?.getLastUrl() || '')
@@ -113,10 +135,12 @@ export function useHomeAssistant() {
           // feedback visible until Home Assistant sends the newer state.
           return { ...device, active: pending.active, detail: pending.active ? 'On' : 'Off' }
         })
-        setDevices(confirmedDevices)
-        setScenes(next.scenes)
-        setWeather(next.weather)
-        setIntegrations(next.integrations)
+        // Home Assistant is polled for live accuracy, but do not repaint the
+        // full dashboard when the received state is unchanged.
+        setDevices((current) => sameDevices(current, confirmedDevices) ? current : confirmedDevices)
+        setScenes((current) => sameScenes(current, next.scenes) ? current : next.scenes)
+        setWeather((current) => sameWeather(current, next.weather) ? current : next.weather)
+        setIntegrations((current) => sameIntegrations(current, next.integrations) ? current : next.integrations)
         setConnection('connected')
         setMessage(`${next.devices.length} Home Assistant entities are live.`)
       } catch {
@@ -139,7 +163,7 @@ export function useHomeAssistant() {
 
   useEffect(() => {
     if (connection !== 'connected') return
-    const timer = window.setInterval(() => window.JarvisNative?.fetchStates(), 3000)
+    const timer = window.setInterval(() => window.JarvisNative?.fetchStates(), 5_000)
     return () => window.clearInterval(timer)
   }, [connection])
 
