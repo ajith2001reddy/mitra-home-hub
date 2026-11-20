@@ -1,0 +1,42 @@
+plugins {
+  id 'com.android.application'
+}
+
+android {
+  namespace 'com.mitrahome.hub'
+  compileSdk 35
+
+  defaultConfig {
+    applicationId 'com.mitrahome.hub'
+    minSdk 26
+    targetSdk 35
+    versionCode 24
+    versionName '3.3'
+  }
+
+  buildTypes {
+    release {
+      signingConfig signingConfigs.debug
+      minifyEnabled false
+    }
+  }
+
+  sourceSets {
+    main {
+      manifest.srcFile '../AndroidManifest.xml'
+      java.srcDirs = ['../src']
+      res.srcDirs = ['../res']
+      assets.srcDirs = ["${rootProject.projectDir}/build/assets"]
+    }
+  }
+}
+
+tasks.register('syncWebAssets', Copy) {
+  from "${rootProject.projectDir.parentFile}/dist"
+  into "${rootProject.projectDir}/build/assets/www"
+}
+tasks.named('preBuild').configure { dependsOn(tasks.named('syncWebAssets')) }
+
+dependencies {
+  implementation 'com.google.android.gms:play-services-auth:21.3.0'
+}

@@ -1,0 +1,29 @@
+# JavaScript build output and dependencies
+node_modules/
+dist/
+coverage/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+local.properties
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+
+# Android / Gradle output
+.gradle/
+native-android/.gradle/
+native-android/build/
+native-android/app/build/
+*.apk
+*.aab
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
